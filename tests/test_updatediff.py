@@ -500,3 +500,39 @@ def test_overwrite_answers_file_always(
     assert answers["question_1"] is True
     assert answers["_commit"] == "2"
     assert (dst / "answer_1").read_text() == "True"
+
+
+def test_file_removed(src_repo, tmp_path):
+    # Add a file in the template repo
+    with local.cwd(src_repo):
+        build_file_tree(
+            {
+                "{{ _copier_conf.answers_file }}.jinja": "{{ _copier_answers|to_yaml }}",
+                "file1": "hello",
+            }
+        )
+        git("add", "-A")
+        git("commit", "-m1")
+        git("tag", "1")
+    # Copy in subproject
+    with local.cwd(tmp_path):
+        git("init")
+        run_copy(str(src_repo))
+        # Subproject has an extra file
+        build_file_tree({"file2": "bye"})
+        git("add", "-A")
+        git("commit", "-m2")
+    # Both files exist
+    assert tmp_path.joinpath("file1").is_file()
+    assert tmp_path.joinpath("file2").is_file()
+    # Template removes file 1
+    with local.cwd(src_repo):
+        Path("file1").unlink()
+        git("commit", "-am3")
+        git("tag", "2")
+    # Subproject updates
+    with local.cwd(tmp_path):
+        run_update()
+    # File 1 got removed
+    assert tmp_path.joinpath("file2").is_file()
+    assert not tmp_path.joinpath("file1").is_file()

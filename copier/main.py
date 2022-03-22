@@ -5,6 +5,7 @@ import subprocess
 import sys
 from contextlib import suppress
 from dataclasses import asdict, field, replace
+from filecmp import dircmp
 from functools import partial
 from itertools import chain
 from pathlib import Path
@@ -698,29 +699,33 @@ class Worker:
                         file=sys.stderr,
                     )
                     diff = diff_cmd("--inter-hunk-context=0")
-        # Run pre-migration tasks
-        self._execute_tasks(
-            self.template.migration_tasks("before", self.subproject.template)
-        )
-        # Clear last answers cache to load possible answers migration
-        with suppress(AttributeError):
-            del self.answers
-        with suppress(AttributeError):
-            del self.subproject.last_answers
-        # Do a normal update in final destination
-        self.run_copy()
-        # Try to apply cached diff into final destination
-        with local.cwd(self.subproject.local_abspath):
-            apply_cmd = git["apply", "--reject", "--exclude", self.answers_relpath]
-            for skip_pattern in chain(
-                self.skip_if_exists, self.template.skip_if_exists
-            ):
-                apply_cmd = apply_cmd["--exclude", skip_pattern]
-            (apply_cmd << diff)(retcode=None)
-        # Run post-migration tasks
-        self._execute_tasks(
-            self.template.migration_tasks("after", self.subproject.template)
-        )
+            # Run pre-migration tasks
+            self._execute_tasks(
+                self.template.migration_tasks("before", self.subproject.template)
+            )
+            # Clear last answers cache to load possible answers migration
+            with suppress(AttributeError):
+                del self.answers
+            with suppress(AttributeError):
+                del self.subproject.last_answers
+            # Do a normal update in final destination
+            self.run_copy()
+            # Try to apply cached diff into final destination
+            with local.cwd(self.subproject.local_abspath):
+                apply_cmd = git["apply", "--reject", "--exclude", self.answers_relpath]
+                for skip_pattern in chain(
+                    self.skip_if_exists, self.template.skip_if_exists
+                ):
+                    apply_cmd = apply_cmd["--exclude", skip_pattern]
+                (apply_cmd << diff)(retcode=None)
+            # Remove files found only in old template
+            compared = dircmp(dst_temp, self.subproject.local_abspath)
+            for file_ in compared.left_only:
+                self.subproject.local_abspath.joinpath(file_).unlink()
+            # Run post-migration tasks
+            self._execute_tasks(
+                self.template.migration_tasks("after", self.subproject.template)
+            )
 
 
 def run_copy(
